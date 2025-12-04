@@ -534,6 +534,7 @@
   "com_nav_long_audio_warning": "Longer texts will take longer to process.",
   "com_nav_maximize_chat_space": "Maximize chat space",
   "com_nav_mcp_configure_server": "Configure {{0}}",
+  "com_nav_mcp_status_connected": "Connected",
   "com_nav_mcp_status_connecting": "{{0}} - Connecting",
   "com_nav_mcp_vars_update_error": "Error updating MCP custom user variables",
   "com_nav_mcp_vars_updated": "MCP custom user variables updated successfully.",
