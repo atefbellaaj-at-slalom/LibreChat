@@ -11,7 +11,7 @@ import { createModels, createMethods, RoleBits } from '@librechat/data-schemas';
 import { ServerConfigsDB } from '../db/ServerConfigsDB';
 import type { ParsedServerConfig } from '~/mcp/types';
 
-// Mock the logger
+// Mock the logger and crypto functions
 jest.mock('@librechat/data-schemas', () => ({
   ...jest.requireActual('@librechat/data-schemas'),
   logger: {
@@ -20,6 +20,14 @@ jest.mock('@librechat/data-schemas', () => ({
     debug: jest.fn(),
     info: jest.fn(),
   },
+  // Mock encryption with simple prefix-based transformation for testing
+  encryptV2: jest.fn().mockImplementation(async (value: string) => `encrypted:${value}`),
+  decryptV2: jest.fn().mockImplementation(async (value: string) => {
+    if (value.startsWith('encrypted:')) {
+      return value.slice('encrypted:'.length);
+    }
+    return value;
+  }),
 }));
 
 let mongoServer: MongoMemoryServer;
@@ -159,6 +167,11 @@ describe('ServerConfigsDB', () => {
       });
       const created = await serverConfigsDB.add('temp-name', config, userId);
 
+      // Verify the secret is encrypted in DB after add (not plaintext)
+      const MCPServer = mongoose.models.MCPServer;
+      let server = await MCPServer.findOne({ serverName: created.serverName });
+      expect(server?.config?.oauth?.client_secret).not.toBe('super-secret-key');
+
       // Update without client_secret
       const updatedConfig = createSSEConfig('OAuth Server', 'Updated description', {
         client_id: 'my-client-id',
@@ -166,10 +179,13 @@ describe('ServerConfigsDB', () => {
       });
       await serverConfigsDB.update(created.serverName, updatedConfig, userId);
 
-      // Verify the secret is preserved
-      const MCPServer = mongoose.models.MCPServer;
-      const server = await MCPServer.findOne({ serverName: created.serverName });
-      expect(server?.config?.oauth?.client_secret).toBe('super-secret-key');
+      // Verify the secret is still encrypted in DB (preserved, not plaintext)
+      server = await MCPServer.findOne({ serverName: created.serverName });
+      expect(server?.config?.oauth?.client_secret).not.toBe('super-secret-key');
+
+      // Verify the secret is decrypted when accessed via get()
+      const retrieved = await serverConfigsDB.get(created.serverName, userId);
+      expect(retrieved?.oauth?.client_secret).toBe('super-secret-key');
     });
 
     it('should allow updating oauth.client_secret when explicitly provided', async () => {
@@ -186,10 +202,31 @@ describe('ServerConfigsDB', () => {
       });
       await serverConfigsDB.update(created.serverName, updatedConfig, userId);
 
-      // Verify the secret is updated
+      // Verify the secret is encrypted in DB (not plaintext)
       const MCPServer = mongoose.models.MCPServer;
       const server = await MCPServer.findOne({ serverName: created.serverName });
-      expect(server?.config?.oauth?.client_secret).toBe('new-secret');
+      expect(server?.config?.oauth?.client_secret).not.toBe('new-secret');
+
+      // Verify the secret is decrypted to the new value when accessed via get()
+      const retrieved = await serverConfigsDB.get(created.serverName, userId);
+      expect(retrieved?.oauth?.client_secret).toBe('new-secret');
+    });
+
+    it('should encrypt oauth.client_secret when saving to database', async () => {
+      const config = createSSEConfig('Encryption Test', 'Test', {
+        client_id: 'test-client-id',
+        client_secret: 'plaintext-secret',
+      });
+      const created = await serverConfigsDB.add('temp-name', config, userId);
+
+      // Verify the secret is encrypted in DB (not plaintext)
+      const MCPServer = mongoose.models.MCPServer;
+      const server = await MCPServer.findOne({ serverName: created.serverName });
+      expect(server?.config?.oauth?.client_secret).not.toBe('plaintext-secret');
+
+      // Verify the secret is decrypted when accessed via get()
+      const retrieved = await serverConfigsDB.get(created.serverName, userId);
+      expect(retrieved?.oauth?.client_secret).toBe('plaintext-secret');
     });
   });
 
